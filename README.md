@@ -157,33 +157,33 @@ Measured on a real 3-location deployment (50 payments, 0 errors):
 ```
 Topology:
   Agent:       local Mac (Zurich)
-  Merchant:    AWS us-east-1 (Virginia)     113ms RTT from agent
+  Merchant:    AWS us-east-1 (Virginia)     114ms RTT from agent
   Facilitator: AWS eu-west-1 (Ireland)       68ms RTT from merchant
 ```
 
 | Metric | P50 | P95 | P99 | Min | Max |
 |--------|-----|-----|-----|-----|-----|
-| **Total (402 → resource)** | **394ms** | 576ms | 799ms | 385ms | 799ms |
-| **Hot path (send → resource)** | **270ms** | 379ms | 621ms | 265ms | 621ms |
-| **Falcon signing** | **4ms** | 5ms | 5ms | 1ms | 5ms |
+| **Total (402 → resource)** | **386ms** | 420ms | 812ms | 379ms | 812ms |
+| **Hot path (send → resource)** | **265ms** | 302ms | 578ms | 263ms | 578ms |
+| **Falcon signing** | **3.6ms** | 4.7ms | 5.1ms | 0.9ms | 5.1ms |
 
 ```
 Breakdown (P50):
 
-  GET /resource → 402:               116 ms  (1 RTT agent↔merchant)
-  Falcon sign:                         4 ms  (local, no kernel execution)
-  GET + Payment-Sig → 200:           270 ms  (1 RTT agent↔merchant 113ms
+  GET /resource → 402:               114 ms  (1 RTT agent↔merchant)
+  Falcon sign:                       3.6 ms  (local, no kernel execution)
+  GET + Payment-Sig → 200:           265 ms  (1 RTT agent↔merchant 114ms
                                               + merchant↔facilitator relay 68ms
                                               + facilitator verify ~1ms
                                               + HTTP overhead)
   ──────────────────────────────────────────
-  Total P50:                          394 ms
+  Total P50:                          386 ms
 ```
 
-The latency is **RTT-dominated**, not compute-dominated. The 4ms Falcon
+The latency is **RTT-dominated**, not compute-dominated. The 3.6ms Falcon
 signing is negligible. With colocated merchant + facilitator (0ms relay
 instead of 68ms), the total drops to ~230ms. With a closer agent↔merchant
-link (68ms instead of 113ms), it drops further to ~140ms.
+link (68ms instead of 114ms), it drops further to ~140ms.
 
 Async settlement: ~7-10s (STARK prove + block inclusion), off the critical path.
 
