@@ -28,6 +28,10 @@ pub struct AdnPayRequest {
     pub prepared_signature_hex: String,
     pub expiry_block_height: u32,
     pub agent_pubkey_commitment_hex: String,
+    /// Hex-encoded serialized Note (for chain-finality settlement).
+    /// Optional: if not provided, sync settlement is skipped.
+    #[serde(default)]
+    pub note_data_hex: Option<String>,
 }
 
 /// Response body for POST /adn/pay.
@@ -100,30 +104,32 @@ pub async fn pay(
         "ADN payment acked"
     );
 
-    // ── 8. Synchronous settlement (if submitter is configured) ──
-    let (tx_id, block_num) = if let Some(submitter) = &state.submitter {
-        let note_bytes = decode_hex(&req.prepared_signature_hex)?; // placeholder: real note bytes TBD
-        let mut note_args = [0u8; 32];
-        // Pack serial_num felts into note_args
-        for (i, h) in req.serial_num_hex.iter().enumerate() {
-            let s = h.trim_start_matches("0x");
-            let val = u64::from_str_radix(s, 16)
-                .map_err(|e| FacilitatorError::Malformed(format!("serial_num[{i}]: {e}")))?;
-            note_args[i * 8..(i + 1) * 8].copy_from_slice(&val.to_be_bytes());
-        }
-        let prepared_sig_bytes = decode_hex(&req.prepared_signature_hex)?;
-        match submitter.consume_adn_note(note_bytes, note_args, prepared_sig_bytes).await {
-            Ok((tid, bn)) => {
-                tracing::info!(tx_id = %tid, block_num = bn, "ADN sync settlement succeeded");
-                (Some(tid), Some(bn))
+    // ── 8. Synchronous settlement (if submitter + note_data provided) ──
+    let (tx_id, block_num) = match (&state.submitter, &req.note_data_hex) {
+        (Some(submitter), Some(note_data_hex)) => {
+            let note_bytes = decode_hex(note_data_hex)?;
+
+            // Pack note_args: [merchant_suffix, merchant_prefix, amount, 0] as 4 x u64 BE
+            let mut note_args = [0u8; 32];
+            note_args[0..8].copy_from_slice(&merchant_id.suffix().as_canonical_u64().to_be_bytes());
+            note_args[8..16].copy_from_slice(&merchant_id.prefix().as_felt().as_canonical_u64().to_be_bytes());
+            note_args[16..24].copy_from_slice(&req.amount.to_be_bytes());
+            // note_args[24..32] stays zero
+
+            let prepared_sig_bytes = decode_hex(&req.prepared_signature_hex)?;
+
+            match submitter.consume_adn_note(note_bytes, note_args, prepared_sig_bytes).await {
+                Ok((tid, bn)) => {
+                    tracing::info!(tx_id = %tid, block_num = bn, "ADN sync settlement succeeded");
+                    (Some(tid), Some(bn))
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "ADN sync settlement failed, returning ack only");
+                    (None, None)
+                }
             }
-            Err(e) => {
-                tracing::warn!(error = %e, "ADN sync settlement failed, returning ack only");
-                (None, None)
-            }
         }
-    } else {
-        (None, None)
+        _ => (None, None),
     };
 
     Ok((
