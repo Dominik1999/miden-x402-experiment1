@@ -34,7 +34,7 @@ User Account                                              Agent
 
 
 ========================================================================
-PHASE 1: PER-PAYMENT (hot path, 2 RTT, ~140ms)
+PHASE 1: PER-PAYMENT (hot path, 2 RTT)
 ========================================================================
 
 Agent                        Merchant (API Server)         Facilitator
@@ -119,58 +119,6 @@ The note script enforces dual-signature verification at the MASM level:
 
 All 7 attack vectors are tested and blocked (see `crates/agent-debit-note/tests/note_script.rs`).
 
-## Repository structure
-
-```
-crates/
-  agent-debit-note/       MASM note script + Rust types + 22 tests
-  adn-client/             Lightweight agent signing client (2ms Falcon, no kernel)
-  x402-facilitator-server/ Facilitator with /adn/pay endpoint
-  server/                  Vendored OZ Guardian server
-  client/                  Vendored OZ Guardian client
-  shared/                  Vendored OZ Guardian shared types
-  contracts/               Miden multisig contracts
-  miden-keystore/          Falcon/ECDSA keystore
-  miden-rpc-client/        Miden node RPC wrapper
-  miden-multisig-client/   Multisig client (used by setup-testnet)
-
-examples/
-  setup-testnet/           Provision testnet accounts + create AgentDebitNote
-  reference-merchant/      Minimal 402 paywall with ADN support
-  x402-bench/              Benchmark harness
-
-scripts/
-  deploy-server.sh         Deploy facilitator + merchant on AWS
-  run-network-bench.sh     Cross-region benchmark
-```
-
-## Quick start
-
-```bash
-# Build
-cargo build --release -p setup-testnet -p reference-merchant \
-  -p x402-facilitator-server -p x402-bench
-
-# Setup testnet accounts + create AgentDebitNote
-./target/release/setup-testnet --agents 1 --mint-amount 1000000 \
-  --adn --adn-amount 100000 --out-dir ./testnet-state
-
-# Start facilitator
-FACILITATOR_DATA_DIR=./fac-data FACILITATOR_HTTP_PORT=7002 \
-MIDEN_RPC_ENDPOINT=https://rpc.testnet.miden.io \
-./target/release/x402-facilitator-server &
-
-# Start merchant (use IDs from testnet-state/setup.toml)
-MERCHANT_ACCOUNT_ID=<merchant_id_hex> \
-MERCHANT_ASSET_FAUCET_ID=<faucet_id_hex> \
-FACILITATOR_URL=http://localhost:7002 \
-./target/release/reference-merchant &
-
-# Run benchmark
-./target/release/x402-bench --setup-dir ./testnet-state \
-  --merchant-url http://localhost:7001 --payments 50
-```
-
 ## Test results
 
 ```
@@ -197,23 +145,50 @@ FACILITATOR_URL=http://localhost:7002 \
     - Agent amount inflation rejected
 
 1 integration test (crates/x402-facilitator-server):
-  - Full HTTP flow: agent → merchant → facilitator → ack → resource
+  - Full HTTP flow: agent -> merchant -> facilitator -> ack -> resource
 
 All 24 tests pass.
 ```
 
-## Measured latency
+## Expected latency
 
-Tested on AWS us-east-1 ↔ eu-west-1 (68ms RTT):
+> **Not yet measured on a real network.** The numbers below are projected from
+> the P2ID approach measurements on AWS us-east-1 <-> eu-west-1 (68ms RTT).
+> A cross-region AWS benchmark for the ADN flow is needed to confirm.
 
 ```
 Agent computation:     2 ms   (Falcon sign only, no kernel execution)
 Merchant round-trip:  70 ms   (1 RTT + facilitator relay on loopback)
 ────────────────────────────
-Hot-path total:      ~140 ms  (2 RTT + 2ms signing)
+Hot-path total:      ~140 ms  (projected: 2 RTT + 2ms signing)
 ```
 
 Async settlement: ~7-10s (STARK prove + block inclusion), off the critical path.
+
+## Repository structure
+
+```
+crates/
+  agent-debit-note/       MASM note script + Rust types + 22 tests
+  adn-client/             Lightweight agent signing client (2ms Falcon, no kernel)
+  x402-facilitator-server/ Facilitator with /adn/pay endpoint
+  server/                  Vendored OZ Guardian server
+  client/                  Vendored OZ Guardian client
+  shared/                  Vendored OZ Guardian shared types
+  contracts/               Miden multisig contracts
+  miden-keystore/          Falcon/ECDSA keystore
+  miden-rpc-client/        Miden node RPC wrapper
+  miden-multisig-client/   Multisig client (used by setup-testnet)
+
+examples/
+  setup-testnet/           Provision testnet accounts + create AgentDebitNote
+  reference-merchant/      Minimal 402 paywall with ADN support
+  x402-bench/              Benchmark harness
+
+scripts/
+  deploy-server.sh         Deploy facilitator + merchant on AWS
+  run-network-bench.sh     Cross-region benchmark
+```
 
 ## Key technical achievements
 
@@ -221,4 +196,3 @@ Async settlement: ~7-10s (STARK prove + block inclusion), off the critical path.
 - **Dual-signature enforcement in MASM** — agent sig from advice stack, facilitator sig from advice map, both verified in sequence
 - **Self-reproducing note pattern** — remainder note copies script + storage with reduced balance
 - **Private note with bearer-instrument semantics** — same trust model as Base x402
-- **~140ms hot-path latency** — agent signs only (2ms), no kernel execution needed
