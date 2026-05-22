@@ -25,6 +25,7 @@ pub struct SignedDebit {
 
 /// Facilitator → Agent: ack that the debit is accepted.
 /// The facilitator has verified the signature and will settle asynchronously.
+/// When synchronous settlement is enabled, `tx_id` and `block_num` are populated.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PayAck {
     /// Unix timestamp (micros) when the facilitator accepted the debit.
@@ -34,6 +35,12 @@ pub struct PayAck {
     pub facilitator_ack_signature: String,
     /// Facilitator's public key commitment (hex) for ack verification.
     pub facilitator_pubkey_commitment: String,
+    /// On-chain transaction ID (present when synchronous settlement succeeded).
+    #[serde(default)]
+    pub tx_id: Option<String>,
+    /// Block number where the settlement tx was included.
+    #[serde(default)]
+    pub block_num: Option<u32>,
 }
 
 /// Facilitator → Agent (async, after settlement): remainder note info.

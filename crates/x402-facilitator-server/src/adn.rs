@@ -36,6 +36,11 @@ pub struct AdnPayResponse {
     pub accepted_at_unix_micros: u64,
     pub facilitator_ack_signature: String,
     pub facilitator_pubkey_commitment: String,
+    /// Present when synchronous settlement succeeded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tx_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_num: Option<u32>,
 }
 
 /// POST /adn/pay — verify agent's signature and ack.
@@ -95,8 +100,31 @@ pub async fn pay(
         "ADN payment acked"
     );
 
-    // ── 8. TODO: queue for async settlement ──
-    // The facilitator will consume the AgentDebitNote in the background.
+    // ── 8. Synchronous settlement (if submitter is configured) ──
+    let (tx_id, block_num) = if let Some(submitter) = &state.submitter {
+        let note_bytes = decode_hex(&req.prepared_signature_hex)?; // placeholder: real note bytes TBD
+        let mut note_args = [0u8; 32];
+        // Pack serial_num felts into note_args
+        for (i, h) in req.serial_num_hex.iter().enumerate() {
+            let s = h.trim_start_matches("0x");
+            let val = u64::from_str_radix(s, 16)
+                .map_err(|e| FacilitatorError::Malformed(format!("serial_num[{i}]: {e}")))?;
+            note_args[i * 8..(i + 1) * 8].copy_from_slice(&val.to_be_bytes());
+        }
+        let prepared_sig_bytes = decode_hex(&req.prepared_signature_hex)?;
+        match submitter.consume_adn_note(note_bytes, note_args, prepared_sig_bytes).await {
+            Ok((tid, bn)) => {
+                tracing::info!(tx_id = %tid, block_num = bn, "ADN sync settlement succeeded");
+                (Some(tid), Some(bn))
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "ADN sync settlement failed, returning ack only");
+                (None, None)
+            }
+        }
+    } else {
+        (None, None)
+    };
 
     Ok((
         StatusCode::OK,
@@ -104,6 +132,8 @@ pub async fn pay(
             accepted_at_unix_micros: now,
             facilitator_ack_signature: ack_signature,
             facilitator_pubkey_commitment: state.facilitator_key.commitment_hex(),
+            tx_id,
+            block_num,
         }),
     ))
 }

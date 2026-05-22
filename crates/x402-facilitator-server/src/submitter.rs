@@ -44,6 +44,14 @@ enum Command {
         bytes: Vec<u8>,
         reply: oneshot::Sender<std::result::Result<(), String>>,
     },
+    /// Consume an AgentDebitNote synchronously: import note, build tx,
+    /// prove, submit, wait for block inclusion. Returns (tx_id, block_num).
+    ConsumeAdnNote {
+        note_bytes: Vec<u8>,
+        note_args: [u8; 32],
+        prepared_sig_bytes: Vec<u8>,
+        reply: oneshot::Sender<std::result::Result<(String, u32), String>>,
+    },
     /// Rebuild a `TransactionRequest` from `request_bytes`, inject the
     /// `(pubkey_commitment, message, signature)` triple into its
     /// advice map, then prove + submit via the miden-client. Returns
@@ -85,6 +93,30 @@ impl SubmitterHandle {
         self.tx
             .send(Command::AddAccountBytes {
                 bytes,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| FacilitatorError::Internal("submitter actor stopped".into()))?;
+        let res = reply_rx
+            .await
+            .map_err(|_| FacilitatorError::Internal("submitter actor dropped reply".into()))?;
+        res.map_err(FacilitatorError::Internal)
+    }
+
+    /// Consume an AgentDebitNote synchronously: import note, build tx,
+    /// prove, submit, and wait for block inclusion. Returns (tx_id, block_num).
+    pub async fn consume_adn_note(
+        &self,
+        note_bytes: Vec<u8>,
+        note_args: [u8; 32],
+        prepared_sig_bytes: Vec<u8>,
+    ) -> Result<(String, u32)> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(Command::ConsumeAdnNote {
+                note_bytes,
+                note_args,
+                prepared_sig_bytes,
                 reply: reply_tx,
             })
             .await
@@ -182,6 +214,18 @@ pub fn spawn_submitter_actor(
                                 .map_err(|e| format!("add_account: {e}")),
                         };
                         let _ = reply.send(res);
+                    }
+                    Command::ConsumeAdnNote { reply, .. } => {
+                        // TODO: implement full note consumption
+                        // 1. Deserialize Note from note_bytes
+                        // 2. Import into client store
+                        // 3. Build TransactionRequest with input_notes + note_args
+                        // 4. Add prepared sig to advice stack
+                        // 5. client.submit_new_transaction()
+                        // 6. client.sync_state() to confirm
+                        let _ = reply.send(Err(
+                            "ConsumeAdnNote: not yet implemented - settlement requires full note integration".into(),
+                        ));
                     }
                     Command::RebuildAndSubmit {
                         account_id,
