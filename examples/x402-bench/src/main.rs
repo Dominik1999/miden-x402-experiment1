@@ -97,9 +97,19 @@ async fn main() -> anyhow::Result<()> {
     let agent_sk = miden_protocol::account::auth::AuthSecretKey::Falcon512Poseidon2(sk);
     let merchant_id = AccountId::from_hex(&report.merchant_id_hex)?;
 
-    let client = adn_client::client::AdnClient::new(
+    let mut client = adn_client::client::AdnClient::new(
         agent_sk, note_id.clone(), serial, balance, expiry,
     );
+
+    // Load ADN note data for chain-finality settlement
+    let adn_note_data_path = args.setup_dir.join("adn_note.b64");
+    if adn_note_data_path.exists() {
+        let note_b64 = std::fs::read_to_string(&adn_note_data_path)?;
+        let note_bytes = base64::engine::general_purpose::STANDARD
+            .decode(note_b64.trim().as_bytes())?;
+        client.set_note_data_hex(format!("0x{}", hex::encode(&note_bytes)));
+        tracing::info!("loaded ADN note data for chain-finality settlement");
+    }
 
     let http = reqwest::Client::builder().user_agent("x402-bench/0.1").build()?;
     let resource_url = format!("{}/resource", merchant_url.trim_end_matches('/'));

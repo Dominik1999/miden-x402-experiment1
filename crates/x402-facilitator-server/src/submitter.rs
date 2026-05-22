@@ -368,13 +368,14 @@ async fn consume_adn_note_inner(
         .await
         .map_err(|e: ClientError| format!("sync_state before submit: {e}"))?;
 
-    // 6. Get the facilitator's account ID
-    // The submitter's miden-client should have at least one account
-    // (added during setup via add_account_bytes). Use a placeholder
-    // account ID for now — in production this would be the facilitator's
-    // own Miden account.
-    let consumer_account_id = AccountId::from_hex("0x000000000000000000000000000001")
-        .map_err(|e| format!("facilitator account id: {e}"))?;
+    // 6. Get the facilitator's account ID from env or use first account in store
+    let consumer_account_id = if let Ok(hex) = std::env::var("FACILITATOR_ACCOUNT_ID") {
+        AccountId::from_hex(&hex)
+            .map_err(|e| format!("FACILITATOR_ACCOUNT_ID parse: {e}"))?
+    } else {
+        // Fallback: try to get any account from the store
+        return Err("FACILITATOR_ACCOUNT_ID not set — cannot consume note".into());
+    };
 
     // 7. Submit: proves locally + submits to Miden node
     let tx_id = client
