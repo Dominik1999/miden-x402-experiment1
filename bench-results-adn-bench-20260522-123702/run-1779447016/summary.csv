@@ -1,0 +1,6 @@
+metric,count,p50_us,p95_us,p99_us,mean_us,min_us,max_us
+total_us,0,,,,,,
+hot_path_us,0,,,,,,
+sign_us,0,,,,,,
+ok_count,0,,,,,,
+error_count,50,,,,,,

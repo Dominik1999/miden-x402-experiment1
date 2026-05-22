@@ -556,3 +556,59 @@ async fn test_consume_with_sig_in_advice_map() -> anyhow::Result<()> {
     println!("ADVICE MAP PATH TEST PASSED: sig from map works for facilitator submitter");
     Ok(())
 }
+
+/// Test the full submitter consumption path:
+/// Build a TransactionRequest via TransactionRequestBuilder with the note as input,
+/// sig in advice map, and execute it. This simulates exactly what the facilitator
+/// submitter does (but via MockChain instead of miden-client).
+#[tokio::test]
+async fn test_submitter_consumption_path() -> anyhow::Result<()> {
+    let agent_sk = make_keypair(31);
+    let pk: Word = agent_sk.public_key().to_commitment().into();
+    let s = setup_test(pk, 1000, serial(31,2,3,4), 1_000_000)?;
+    let msg = debit_message(s.serial_num, s.merchant_id, 100);
+
+    // Agent signs
+    let sig = agent_sk.sign(msg);
+    let prepared = sig.to_prepared_signature(msg);
+
+    // Compute advice map key = merge(AGENT_PK, MESSAGE) — same as submitter
+    let sig_key = Hasher::merge(&[pk, msg]);
+
+    // Build note_args Word — same as submitter packs it
+    let note_args: Word = [
+        s.merchant_id.suffix(),
+        s.merchant_id.prefix().as_felt(),
+        Felt::new(100),
+        Felt::ZERO,
+    ].into();
+
+    // Build advice inputs with sig in MAP (not stack) — submitter path
+    let advice = AdviceInputs::default()
+        .with_map([(sig_key, prepared)]);
+
+    // Use MockChain's build_tx_context which internally uses TransactionContextBuilder
+    // This simulates the TransactionRequestBuilder path
+    let tx = s.mock_chain
+        .build_tx_context(s.consumer_id, &[s.note_id], &[])?
+        .extend_note_args(note_args_for(s.merchant_id, 100, s.note_id))
+        .add_note_script(s.note_script)
+        .extend_advice_inputs(advice)
+        .build()?;
+
+    let executed = tx.execute().await?;
+    assert_eq!(executed.output_notes().num_notes(), 2,
+        "submitter path should produce P2ID + remainder");
+
+    // Verify asset preservation
+    let mut total = 0u64;
+    for note in executed.output_notes().iter() {
+        if let miden_protocol::transaction::RawOutputNote::Full(n) = note {
+            for a in n.assets().iter_fungible() { total += a.amount(); }
+        }
+    }
+    assert_eq!(total, 1000, "1000 in = 100 P2ID + 900 remainder");
+
+    println!("SUBMITTER PATH TEST PASSED: full consumption via advice map works");
+    Ok(())
+}

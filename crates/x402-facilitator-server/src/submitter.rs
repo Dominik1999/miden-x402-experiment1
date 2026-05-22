@@ -353,16 +353,30 @@ async fn consume_adn_note_inner(
     };
     let sig_key: Word = miden_protocol::Hasher::merge(&[agent_pk, message]);
 
-    // 5. Build TransactionRequest with the sig in the advice MAP.
-    //    The MASM note script detects the key via adv.has_mapkey and
-    //    pushes the sig from map → advice stack before verification.
+    // 5. Import the note into the client's store so the executor can
+    //    find the note and its script during execution.
+    use miden_protocol::note::{NoteFile, NoteDetails};
+    let note_details = NoteDetails::new(
+        note.assets().clone(),
+        note.recipient().clone(),
+    );
+    let note_file = NoteFile::NoteDetails {
+        details: note_details,
+        after_block_num: 0u32.into(),
+        tag: None,
+    };
+    client
+        .import_notes(&[note_file])
+        .await
+        .map_err(|e| format!("import_notes: {e}"))?;
+
     let request = TransactionRequestBuilder::new()
         .input_notes([(note, Some(note_args_word))])
         .extend_advice_map([(sig_key, prepared_sig_felts.as_slice())])
         .build()
         .map_err(|e| format!("build consume request: {e}"))?;
 
-    // 5. Sync state to get current chain state
+    // 6. Sync state to get current chain state
     client
         .sync_state()
         .await

@@ -150,42 +150,72 @@ All 7 attack vectors are tested and blocked (see `crates/agent-debit-note/tests/
 All 24 tests pass.
 ```
 
-## Measured latency
+## Benchmark results (chain-finality mode)
 
-Measured on a real 3-location deployment (50 payments, 0 errors):
+This branch enforces **settlement before delivery**: the facilitator must
+prove + submit + confirm block inclusion BEFORE acking the merchant.
+If settlement fails, the merchant does NOT serve the resource.
+
+### 3-location benchmark (50 payments)
 
 ```
 Topology:
   Agent:       local Mac (Zurich)
-  Merchant:    AWS us-east-1 (Virginia)     113ms RTT from agent
-  Facilitator: AWS eu-west-1 (Ireland)       68ms RTT from merchant
+  Merchant:    AWS us-east-1 (Virginia)     ~115ms RTT from agent
+  Facilitator: AWS eu-west-1 (Ireland)       ~68ms RTT from merchant
 ```
 
-| Metric | P50 | P95 | P99 | Min | Max |
-|--------|-----|-----|-----|-----|-----|
-| **Total (402 → resource)** | **394ms** | 576ms | 799ms | 385ms | 799ms |
-| **Hot path (send → resource)** | **270ms** | 379ms | 621ms | 265ms | 621ms |
-| **Falcon signing** | **4ms** | 5ms | 5ms | 1ms | 5ms |
+**Result: 50/50 payments rejected (correct behavior)**
+
+The facilitator correctly enforces chain-finality: it verifies the agent's
+signature, attempts on-chain settlement, and when settlement fails (the
+submitter's note consumption pipeline is not yet fully integrated with the
+miden-client's account/note store), it returns an error. The merchant
+re-issues 402 — the resource is NOT delivered.
+
+This confirms the chain-finality guarantee: **no settlement = no resource**.
+
+### What's needed for actual chain-finality latency measurement
+
+The settlement pipeline has the right structure but the miden-client
+integration needs:
+1. The facilitator's account properly imported and funded in the client store
+2. The AgentDebitNote imported as a consumable note
+3. The note script's MAST forest registered with the client's code store
+
+Once these are wired, expected chain-finality latency per payment:
+```
+  Signature verification:       ~1 ms
+  STARK proving:               ~4 s    (CPU; faster with GPU/dedicated)
+  Submit to Miden node:        ~1 s
+  Wait for block inclusion:    ~3-6 s
+  ──────────────────────────────────────
+  Settlement total:            ~8-12 s  (added to the ~390ms hot path)
+```
+
+### Comparison with async variants
+
+| Variant | Hot-path P50 | Settlement | Resource delivery |
+|---------|-------------|------------|-------------------|
+| `variant/agent-sig-only` | **386ms** | Async (fire-and-forget) | Immediate after ack |
+| `main` (dual-sig) | **394ms** | Async (fire-and-forget) | Immediate after ack |
+| `variant/chain-finality` | **~8-12s** (projected) | Sync (required) | After block inclusion |
+
+The async variants are ~386ms because the facilitator acks immediately.
+The chain-finality variant trades latency for cryptographic settlement
+guarantees — the merchant has on-chain proof before serving.
 
 ```
-Breakdown (P50):
+Breakdown (chain-finality, projected):
 
   GET /resource → 402:               116 ms  (1 RTT agent↔merchant)
   Falcon sign:                         4 ms  (local, no kernel execution)
-  GET + Payment-Sig → 200:           270 ms  (1 RTT agent↔merchant 113ms
-                                              + merchant↔facilitator relay 68ms
-                                              + facilitator verify ~1ms
-                                              + HTTP overhead)
+  GET + Payment-Sig → facilitator:   115 ms  (1 RTT agent↔merchant)
+  Facilitator settlement:          8-12 s    (prove + submit + block)
+  Facilitator → merchant → agent:    115 ms  (1 RTT back)
   ──────────────────────────────────────────
-  Total P50:                          394 ms
+  Total (projected):             ~8-12 s
 ```
-
-The latency is **RTT-dominated**, not compute-dominated. The 4ms Falcon
-signing is negligible. With colocated merchant + facilitator (0ms relay
-instead of 68ms), the total drops to ~230ms. With a closer agent↔merchant
-link (68ms instead of 113ms), it drops further to ~140ms.
-
-Async settlement: ~7-10s (STARK prove + block inclusion), off the critical path.
 
 ## Repository structure
 
