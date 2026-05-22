@@ -88,49 +88,52 @@ pub async fn pay(
         )));
     }
 
-    // ── 3. TODO: check note is on-chain and has sufficient balance ──
-    // ── 4. TODO: check expiry gap (current_block + min_gap < expiry_block) ──
-    // ── 5. TODO: mandate enforcement ──
-    // ── 6. TODO: reserve debit (prevent double-spend of same serial+amount) ──
+    // ── 3. Settle on-chain BEFORE acking ──
+    //
+    // This is the chain-finality mode (matching Base x402):
+    // The facilitator must prove + submit + wait for block inclusion
+    // BEFORE telling the merchant to serve the resource.
+    // If settlement fails, the merchant does NOT serve.
 
-    // ── 7. Sign facilitator ack ──
-    let ack_msg = ack_message(now, &req.note_id, &req.merchant_account_id, req.amount)?;
-    let ack_signature = state.facilitator_key.sign_word_hex(ack_msg)?;
+    let submitter = state.submitter.as_ref()
+        .ok_or_else(|| FacilitatorError::Internal(
+            "chain-finality mode requires MIDEN_RPC_ENDPOINT (no submitter configured)".into()
+        ))?;
+
+    let note_data_hex = req.note_data_hex.as_ref()
+        .ok_or_else(|| FacilitatorError::Malformed(
+            "chain-finality mode requires note_data_hex in request".into()
+        ))?;
+
+    let note_bytes = decode_hex(note_data_hex)?;
+
+    // Pack note_args: [merchant_suffix, merchant_prefix, amount, 0] as 4 x u64 BE
+    let mut note_args = [0u8; 32];
+    note_args[0..8].copy_from_slice(&merchant_id.suffix().as_canonical_u64().to_be_bytes());
+    note_args[8..16].copy_from_slice(&merchant_id.prefix().as_felt().as_canonical_u64().to_be_bytes());
+    note_args[16..24].copy_from_slice(&req.amount.to_be_bytes());
+
+    let prepared_sig_bytes = decode_hex(&req.prepared_signature_hex)?;
 
     tracing::info!(
         note_id = %req.note_id,
         merchant = %req.merchant_account_id,
         amount = req.amount,
-        "ADN payment acked"
+        "ADN payment: settling on-chain before ack..."
     );
 
-    // ── 8. Synchronous settlement (if submitter + note_data provided) ──
-    let (tx_id, block_num) = match (&state.submitter, &req.note_data_hex) {
-        (Some(submitter), Some(note_data_hex)) => {
-            let note_bytes = decode_hex(note_data_hex)?;
+    let (tx_id, block_num) = submitter
+        .consume_adn_note(note_bytes, note_args, prepared_sig_bytes)
+        .await
+        .map_err(|e| FacilitatorError::Internal(
+            format!("chain-finality settlement failed: {e}")
+        ))?;
 
-            // Pack note_args: [merchant_suffix, merchant_prefix, amount, 0] as 4 x u64 BE
-            let mut note_args = [0u8; 32];
-            note_args[0..8].copy_from_slice(&merchant_id.suffix().as_canonical_u64().to_be_bytes());
-            note_args[8..16].copy_from_slice(&merchant_id.prefix().as_felt().as_canonical_u64().to_be_bytes());
-            note_args[16..24].copy_from_slice(&req.amount.to_be_bytes());
-            // note_args[24..32] stays zero
+    tracing::info!(%tx_id, block_num, "ADN settlement confirmed on-chain, acking merchant");
 
-            let prepared_sig_bytes = decode_hex(&req.prepared_signature_hex)?;
-
-            match submitter.consume_adn_note(note_bytes, note_args, prepared_sig_bytes).await {
-                Ok((tid, bn)) => {
-                    tracing::info!(tx_id = %tid, block_num = bn, "ADN sync settlement succeeded");
-                    (Some(tid), Some(bn))
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "ADN sync settlement failed, returning ack only");
-                    (None, None)
-                }
-            }
-        }
-        _ => (None, None),
-    };
+    // ── 4. Sign facilitator ack (only AFTER on-chain confirmation) ──
+    let ack_msg = ack_message(now, &req.note_id, &req.merchant_account_id, req.amount)?;
+    let ack_signature = state.facilitator_key.sign_word_hex(ack_msg)?;
 
     Ok((
         StatusCode::OK,
@@ -138,8 +141,8 @@ pub async fn pay(
             accepted_at_unix_micros: now,
             facilitator_ack_signature: ack_signature,
             facilitator_pubkey_commitment: state.facilitator_key.commitment_hex(),
-            tx_id,
-            block_num,
+            tx_id: Some(tx_id),
+            block_num: Some(block_num),
         }),
     ))
 }
