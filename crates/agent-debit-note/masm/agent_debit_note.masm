@@ -1,27 +1,22 @@
 #! AgentDebitNote — pre-funded note for x402 agent payments.
 #!
-#! Consume path (before expiry): requires BOTH agent_sig AND facilitator_sig
-#! over the same debit message. Creates P2ID to merchant + remainder note.
-#! Both prepared signatures must be on the advice stack (facilitator first,
-#! then agent — agent's is verified first since it's on top).
+#! Consume path (before expiry): requires agent_sig over the debit message.
+#! Creates P2ID to merchant + remainder note.
 #!
 #! Reclaim path (at or after expiry): requires only agent_sig over a reclaim
-#! message. Creates P2ID to user for full remaining balance. No facilitator
-#! signature needed — this is the user's safety valve.
+#! message. Creates P2ID to user for full remaining balance.
 #!
-#! Note storage (11 items at STORAGE_PTR):
+#! Note storage (7 items at STORAGE_PTR):
 #!   [0-3]  agent_pubkey_commitment (Word)
-#!   [4-7]  facilitator_pubkey_commitment (Word)
-#!   [8]    user_account_id_suffix
-#!   [9]    user_account_id_prefix
-#!   [10]   expiry_block_height
+#!   [4]    user_account_id_suffix
+#!   [5]    user_account_id_prefix
+#!   [6]    expiry_block_height
 #!
 #! Note args:
 #!   Consume: [merchant_suffix, merchant_prefix, amount, 0]
 #!   Reclaim: [0, 0, 0, 0]
 #!
-#! Advice stack (consume): [facilitator_prepared_sig..., agent_prepared_sig...]
-#!   Agent sig is on top (verified first), facilitator sig underneath.
+#! Advice stack (consume): [agent_prepared_sig...]
 #! Advice stack (reclaim): [agent_prepared_sig...]
 
 use miden::protocol::active_note
@@ -38,10 +33,9 @@ use miden::standards::notes::p2id
 
 const STORAGE_PTR=100
 const AGENT_PK_PTR=100
-const FACILITATOR_PK_PTR=104
-const USER_SUFFIX_PTR=108
-const USER_PREFIX_PTR=109
-const EXPIRY_BLOCK_PTR=110
+const USER_SUFFIX_PTR=104
+const USER_PREFIX_PTR=105
+const EXPIRY_BLOCK_PTR=106
 
 const MERCHANT_SUFFIX=8
 const MERCHANT_PREFIX=9
@@ -79,9 +73,7 @@ pub proc main
 end
 
 # ── Consume path ──
-#! Requires two Falcon signatures on the advice stack:
-#!   Top:    agent's prepared signature (verified first)
-#!   Below:  facilitator's prepared signature (verified second)
+#! Requires agent's Falcon signature on the advice stack.
 
 proc consume_path
     # ── 1. Compute MESSAGE ──
@@ -96,30 +88,7 @@ proc consume_path
     exec.falcon512_poseidon2::verify
     # => []
 
-    # ── 3. Recompute MESSAGE ──
-    push.0 mem_load.DEBIT_AMOUNT mem_load.MERCHANT_PREFIX mem_load.MERCHANT_SUFFIX
-    exec.active_note::get_serial_number
-    exec.poseidon2::merge
-    # => [MESSAGE]
-
-    # ── 4. Verify FACILITATOR signature (from advice map) ──
-    padw push.FACILITATOR_PK_PTR mem_loadw_le
-    # => [FACILITATOR_PK, MESSAGE]
-
-    # Look up facilitator sig: key = merge(FACILITATOR_PK, MESSAGE)
-    dupw.1 dupw.1
-    exec.poseidon2::merge
-    # => [SIG_KEY, FACILITATOR_PK, MESSAGE]
-    adv.push_mapval
-    # => [SIG_KEY, FACILITATOR_PK, MESSAGE]
-    # AS => [FACILITATOR_SIG]
-    dropw
-    # => [FACILITATOR_PK, MESSAGE]
-
-    exec.falcon512_poseidon2::verify
-    # => []
-
-    # ── 5. Add assets to vault ──
+    # ── 3. Add assets to vault ──
     exec.wallet::add_assets_to_account
     push.ASSET_KEY_PTR exec.active_note::get_assets drop drop
 
@@ -139,7 +108,7 @@ proc consume_path
     exec.active_note::get_script_root
     exec.active_note::get_serial_number
     push.1 add
-    push.11 push.STORAGE_PTR
+    push.7 push.STORAGE_PTR
     exec.note::build_recipient
     push.1 push.0
     exec.output_note::create
@@ -152,7 +121,7 @@ proc consume_path
 end
 
 # ── Reclaim path ──
-#! After expiry, only agent_sig required (no facilitator co-sign).
+#! After expiry, agent_sig required.
 #! Creates P2ID to user for full balance.
 
 proc reclaim_path

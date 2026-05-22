@@ -164,20 +164,13 @@ for i in $(seq 1 60); do
 done
 log "Facilitator listening."
 
-# Verify facilitator healthz returns pubkey
-FAC_HEALTH=$(curl -s "http://${FAC_IP}:7002/healthz" 2>/dev/null || echo "{}")
-log "Facilitator health: ${FAC_HEALTH}"
-echo ""
-
-# ── Phase 4: Setup testnet accounts + AgentDebitNote (with facilitator pubkey) ──
+# ── Phase 4: Setup testnet accounts + AgentDebitNote ──
 log "Phase 4: Setting up testnet accounts + AgentDebitNote..."
-log "  (setup-testnet will fetch facilitator pubkey from http://${FAC_IP}:7002)"
 
 ssh_cmd "$FAC_IP" "bash -lc '
   cd ~/miden-x402
   ./target/release/setup-testnet --agents 1 --mint-amount 1000000 \
     --adn --adn-amount 100000 \
-    --adn-facilitator-url http://127.0.0.1:7002 \
     --out-dir ./testnet-state 2>&1
 '"  2>&1 | sed 's/^/  [setup] /'
 

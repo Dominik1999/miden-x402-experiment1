@@ -44,7 +44,7 @@ use miden_confidential_contracts::multisig_guardian::{
 use miden_protocol::Word;
 use miden_protocol::note::{Note, NoteAssets, NoteMetadata, NoteRecipient, NoteStorage, NoteTag};
 use miden_protocol::transaction::TransactionSummary;
-use miden_protocol::utils::serde::{Deserializable, Serializable};
+use miden_protocol::utils::serde::Serializable;
 use miden_standards::code_builder::CodeBuilder;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -87,10 +87,6 @@ struct Args {
     #[arg(long, default_value_t = 100_000u32)]
     adn_expiry_blocks: u32,
 
-    /// Facilitator URL to fetch its pubkey for the AgentDebitNote co-sig storage.
-    /// The facilitator must be running before setup-testnet.
-    #[arg(long)]
-    adn_facilitator_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -365,39 +361,12 @@ async fn main() -> anyhow::Result<()> {
         let _merchant_for_storage = merchant.id();
         let user_id = agent_id; // user = agent's own account for reclaim
 
-        // Fetch facilitator pubkey for co-signature storage
-        let facilitator_pk_commitment: Word = if let Some(ref fac_url) = args.adn_facilitator_url {
-            let health_url = format!("{}/healthz", fac_url.trim_end_matches('/'));
-            let http_client = reqwest::Client::new();
-            let resp: serde_json::Value = http_client.get(&health_url)
-                .send().await
-                .map_err(|e| anyhow::anyhow!("facilitator healthz: {e}"))?
-                .json().await
-                .map_err(|e| anyhow::anyhow!("facilitator healthz json: {e}"))?;
-            let pk_hex = resp.get("facilitator_pubkey_commitment")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow::anyhow!("facilitator healthz missing facilitator_pubkey_commitment"))?;
-            let pk_bytes = hex::decode(pk_hex.trim_start_matches("0x"))
-                .map_err(|e| anyhow::anyhow!("facilitator pk hex: {e}"))?;
-            let pk = miden_protocol::Word::read_from_bytes(&pk_bytes)
-                .map_err(|e| anyhow::anyhow!("facilitator pk decode: {e}"))?;
-            tracing::info!(facilitator_pk = %pk_hex, "fetched facilitator pubkey");
-            pk
-        } else {
-            tracing::warn!("no --adn-facilitator-url; using zero facilitator pubkey (tests only)");
-            Word::default()
-        };
-
-        // 11-item storage: [agent_pk(4), facilitator_pk(4), user_suffix, user_prefix, expiry]
+        // 7-item storage: [agent_pk(4), user_suffix, user_prefix, expiry]
         let adn_storage = NoteStorage::new(vec![
             agent_pk_commitment[0],
             agent_pk_commitment[1],
             agent_pk_commitment[2],
             agent_pk_commitment[3],
-            facilitator_pk_commitment[0],
-            facilitator_pk_commitment[1],
-            facilitator_pk_commitment[2],
-            facilitator_pk_commitment[3],
             user_id.suffix(),
             user_id.prefix().as_felt(),
             Felt::new(expiry_block as u64),
