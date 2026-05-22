@@ -21,6 +21,10 @@ pub struct SignedDebit {
     pub expiry_block_height: u32,
     /// Agent's public key commitment (hex Word) — for facilitator to verify.
     pub agent_pubkey_commitment_hex: String,
+    /// Hex-encoded serialized Note (for async settlement by the facilitator).
+    /// Optional: when provided, the facilitator can consume the note in the background.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note_data_hex: Option<String>,
 }
 
 /// Facilitator → Agent: ack that the debit is accepted.

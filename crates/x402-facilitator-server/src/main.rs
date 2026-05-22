@@ -65,6 +65,22 @@ async fn main() -> anyhow::Result<()> {
                     tracing::warn!(error = %e, "submitter actor sync failed at startup; continuing");
                 }
             }
+            // Import facilitator account if snapshot provided
+            if let Ok(snap_path) = std::env::var("FACILITATOR_ACCOUNT_SNAPSHOT") {
+                match std::fs::read_to_string(&snap_path) {
+                    Ok(b64) => {
+                        use base64::Engine;
+                        match base64::engine::general_purpose::STANDARD.decode(b64.trim().as_bytes()) {
+                            Ok(bytes) => match handle.add_account_bytes(bytes).await {
+                                Ok(()) => tracing::info!("facilitator account imported into submitter"),
+                                Err(e) => tracing::warn!(error = %e, "failed to import facilitator account"),
+                            },
+                            Err(e) => tracing::warn!(error = %e, "failed to decode facilitator snapshot b64"),
+                        }
+                    }
+                    Err(e) => tracing::warn!(error = %e, path = %snap_path, "failed to read facilitator snapshot"),
+                }
+            }
             Some(handle)
         }
         Err(_) => None,

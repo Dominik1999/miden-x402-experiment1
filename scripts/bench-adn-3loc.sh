@@ -187,8 +187,28 @@ echo "$SETUP_TOML" | sed 's/^/    /'
 
 MERCHANT_ID=$(echo "$SETUP_TOML" | sed -n 's/^merchant_id_hex *= *"\([^"]*\)".*/\1/p' | head -1)
 FAUCET_ID=$(echo "$SETUP_TOML" | sed -n 's/^faucet_id_hex *= *"\([^"]*\)".*/\1/p' | head -1)
-log "Merchant ID: ${MERCHANT_ID}"
-log "Faucet ID:   ${FAUCET_ID}"
+FAC_ACCOUNT_ID=$(echo "$SETUP_TOML" | sed -n 's/^facilitator_account_id_hex *= *"\([^"]*\)".*/\1/p' | head -1)
+log "Merchant ID:     ${MERCHANT_ID}"
+log "Faucet ID:       ${FAUCET_ID}"
+log "Facilitator ID:  ${FAC_ACCOUNT_ID}"
+
+# ── Phase 4b: Restart facilitator with account snapshot + ID for async settlement ──
+log "Phase 4b: Restarting facilitator with settlement config..."
+ssh_cmd "$FAC_IP" "bash -lc '
+  pkill -f x402-facilitator-server || true
+  sleep 2
+  cd ~/miden-x402
+  nohup env FACILITATOR_DATA_DIR=./fac-data FACILITATOR_HTTP_PORT=7002 \
+    MIDEN_RPC_ENDPOINT=https://rpc.testnet.miden.io RUST_LOG=info \
+    FACILITATOR_ACCOUNT_SNAPSHOT=./testnet-state/facilitator_account.b64 \
+    FACILITATOR_ACCOUNT_ID=${FAC_ACCOUNT_ID} \
+    ./target/release/x402-facilitator-server > facilitator.log 2>&1 &
+'"
+for i in $(seq 1 60); do
+  ssh_cmd "$FAC_IP" "grep -q 'listening' ~/miden-x402/facilitator.log 2>/dev/null" 2>/dev/null && break
+  sleep 5
+done
+log "Facilitator restarted with settlement support."
 
 # ── Phase 5: Start merchant (points to facilitator) ──
 log "Phase 5: Starting merchant on ${MERCH_IP}:7001 → facilitator at ${FAC_IP}:7002..."

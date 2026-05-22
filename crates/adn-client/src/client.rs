@@ -43,6 +43,8 @@ pub struct AdnClient {
     balance: u64,
     expiry_block: u32,
     agent_pubkey_commitment: Word,
+    /// Optional hex-encoded serialized Note for async settlement.
+    note_data_hex: Option<String>,
 }
 
 impl AdnClient {
@@ -61,7 +63,14 @@ impl AdnClient {
             balance,
             expiry_block,
             agent_pubkey_commitment,
+            note_data_hex: None,
         }
+    }
+
+    /// Set the hex-encoded serialized Note for async settlement.
+    pub fn with_note_data_hex(mut self, hex: String) -> Self {
+        self.note_data_hex = Some(hex);
+        self
     }
 
     pub fn note_id(&self) -> &str {
@@ -123,6 +132,7 @@ impl AdnClient {
                 "0x{}",
                 hex::encode(self.agent_pubkey_commitment.to_bytes())
             ),
+            note_data_hex: self.note_data_hex.clone(),
         };
 
         Ok((debit, timings))

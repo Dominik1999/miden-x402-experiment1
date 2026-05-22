@@ -42,6 +42,8 @@ struct SetupReport {
     adn_balance: Option<u64>,
     #[serde(default)]
     adn_expiry_block: Option<u32>,
+    #[serde(default)]
+    adn_note_data_hex: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -97,9 +99,12 @@ async fn main() -> anyhow::Result<()> {
     let agent_sk = miden_protocol::account::auth::AuthSecretKey::Falcon512Poseidon2(sk);
     let merchant_id = AccountId::from_hex(&report.merchant_id_hex)?;
 
-    let client = adn_client::client::AdnClient::new(
+    let mut client = adn_client::client::AdnClient::new(
         agent_sk, note_id.clone(), serial, balance, expiry,
     );
+    if let Some(ref hex) = report.adn_note_data_hex {
+        client = client.with_note_data_hex(hex.clone());
+    }
 
     let http = reqwest::Client::builder().user_agent("x402-bench/0.1").build()?;
     let resource_url = format!("{}/resource", merchant_url.trim_end_matches('/'));

@@ -62,6 +62,24 @@ impl FacilitatorKey {
             .map_err(|e| FacilitatorError::Internal(format!("sign: {e}")))?;
         Ok(format!("0x{}", hex::encode(sig.to_bytes())))
     }
+
+    /// Sign a message and return the prepared signature as Felts
+    /// (suitable for injection into the advice map / advice stack).
+    pub fn sign_prepared(&self, msg: Word) -> Result<Vec<miden_protocol::Felt>> {
+        let raw_sig = self
+            .inner
+            .sign(self.commitment, msg)
+            .map_err(|e| FacilitatorError::Internal(format!("sign: {e}")))?;
+        // Wrap the raw Falcon signature into the auth::Signature enum
+        // so we can call to_prepared_signature().
+        let auth_sig = miden_protocol::account::auth::Signature::Falcon512Poseidon2(raw_sig);
+        Ok(auth_sig.to_prepared_signature(msg))
+    }
+
+    /// Return the facilitator's public key commitment as a Word.
+    pub fn commitment_word(&self) -> Word {
+        self.commitment
+    }
 }
 
 pub fn word_to_hex(w: Word) -> String {

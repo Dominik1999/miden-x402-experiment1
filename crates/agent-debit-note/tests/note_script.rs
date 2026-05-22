@@ -116,6 +116,29 @@ fn note_args_for(merchant: AccountId, amount: u64, note_id: NoteId) -> BTreeMap<
     args
 }
 
+/// Build advice inputs with BOTH sigs in the advice map (no advice stack).
+/// This is the path used by the facilitator submitter for async settlement.
+fn dual_sig_advice_map_only(agent_sk: &AuthSecretKey, facilitator_sk: &AuthSecretKey, message: Word) -> AdviceInputs {
+    let agent_sig = agent_sk.sign(message);
+    let facilitator_sig = facilitator_sk.sign(message);
+
+    // Agent sig in advice map at key = merge(agent_pk, message)
+    let agent_pk: Word = agent_sk.public_key().to_commitment().into();
+    let agent_key = Hasher::merge(&[agent_pk, message]);
+    let agent_prepared = agent_sig.to_prepared_signature(message);
+
+    // Facilitator sig in advice map at key = merge(fac_pk, message)
+    let fac_pk: Word = facilitator_sk.public_key().to_commitment().into();
+    let fac_key = Hasher::merge(&[fac_pk, message]);
+    let fac_prepared = facilitator_sig.to_prepared_signature(message);
+
+    AdviceInputs::default()
+        .with_map([
+            (agent_key, agent_prepared),
+            (fac_key, fac_prepared),
+        ])
+}
+
 // ── CONSUME PATH TESTS (require agent + facilitator sigs) ──
 
 #[tokio::test]
@@ -280,6 +303,28 @@ async fn test_07_remainder_correct_value() -> anyhow::Result<()> {
     }
     assert_eq!(total, 1000);
     println!("Test #7 PASSED");
+    Ok(())
+}
+
+/// #8: Valid consume with BOTH sigs in the advice MAP (no advice stack).
+/// This tests the dual-map path used by the facilitator submitter.
+#[tokio::test]
+async fn test_08_valid_consume_both_sigs_in_map() -> anyhow::Result<()> {
+    let agent_sk = make_keypair(8);
+    let pk: Word = agent_sk.public_key().to_commitment().into();
+    let s = setup_test(pk, 1000, serial(8,2,3,4), 1_000_000)?;
+    let msg = debit_message(s.serial_num, s.merchant_id, 100);
+
+    let tx = s.mock_chain
+        .build_tx_context(s.consumer_id, &[s.note_id], &[])?
+        .extend_note_args(note_args_for(s.merchant_id, 100, s.note_id))
+        .add_note_script(s.note_script)
+        .extend_advice_inputs(dual_sig_advice_map_only(&agent_sk, &s.facilitator_sk, msg))
+        .build()?;
+
+    let executed = tx.execute().await?;
+    assert_eq!(executed.output_notes().num_notes(), 2);
+    println!("Test #8 PASSED: both sigs via advice map");
     Ok(())
 }
 

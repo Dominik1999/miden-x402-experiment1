@@ -28,6 +28,10 @@ pub struct AdnPayRequest {
     pub prepared_signature_hex: String,
     pub expiry_block_height: u32,
     pub agent_pubkey_commitment_hex: String,
+    /// Hex-encoded serialized Note (for async settlement).
+    /// Optional: if not provided, async settlement is skipped.
+    #[serde(default)]
+    pub note_data_hex: Option<String>,
 }
 
 /// Response body for POST /adn/pay.
@@ -95,8 +99,44 @@ pub async fn pay(
         "ADN payment acked"
     );
 
-    // ── 8. TODO: queue for async settlement ──
-    // The facilitator will consume the AgentDebitNote in the background.
+    // ── 8. Fire-and-forget async settlement ──
+    if let (Some(submitter), Some(note_data_hex)) = (&state.submitter, &req.note_data_hex) {
+        let note_bytes = decode_hex(note_data_hex)?;
+        let mut note_args = [0u8; 32];
+        note_args[0..8].copy_from_slice(&merchant_id.suffix().as_canonical_u64().to_be_bytes());
+        note_args[8..16].copy_from_slice(&merchant_id.prefix().as_felt().as_canonical_u64().to_be_bytes());
+        note_args[16..24].copy_from_slice(&req.amount.to_be_bytes());
+
+        // Agent's prepared sig (from the request)
+        let agent_prepared_sig_bytes = decode_hex(&req.prepared_signature_hex)?;
+
+        // Parse agent PK commitment
+        let agent_pk_commitment = crate::key::parse_word_hex(&req.agent_pubkey_commitment_hex)?;
+
+        // Facilitator signs the same debit message for the note script
+        let facilitator_prepared_sig = state.facilitator_key.sign_prepared(message)?;
+        let facilitator_prepared_sig_bytes: Vec<u8> = facilitator_prepared_sig
+            .iter()
+            .flat_map(|f| f.as_canonical_u64().to_le_bytes())
+            .collect();
+        let facilitator_pk_commitment = state.facilitator_key.commitment_word();
+
+        let submitter = submitter.clone();
+        tokio::spawn(async move {
+            match submitter.consume_adn_note(
+                note_bytes,
+                note_args,
+                agent_prepared_sig_bytes,
+                facilitator_prepared_sig_bytes,
+                agent_pk_commitment,
+                facilitator_pk_commitment,
+                message,
+            ).await {
+                Ok((tid, bn)) => tracing::info!(tx_id = %tid, block_num = bn, "async settlement succeeded (dual-sig)"),
+                Err(e) => tracing::warn!(error = %e, "async settlement failed"),
+            }
+        });
+    }
 
     Ok((
         StatusCode::OK,
