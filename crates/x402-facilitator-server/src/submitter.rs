@@ -27,11 +27,12 @@ use guardian_shared::SignatureScheme;
 use miden_client::builder::ClientBuilder;
 use miden_client::keystore::FilesystemKeyStore;
 use miden_client::rpc::{Endpoint, GrpcClient};
-use miden_client::transaction::TransactionRequest;
+use miden_client::transaction::{TransactionRequest, TransactionRequestBuilder};
 use miden_client::{Client as MidenSdkClient, ClientError};
 use miden_client_sqlite_store::ClientBuilderSqliteExt;
-use miden_protocol::Word;
+use miden_protocol::{Felt, Word};
 use miden_protocol::account::{Account, AccountId};
+use miden_protocol::note::Note;
 use miden_protocol::utils::serde::Deserializable;
 use tokio::sync::{mpsc, oneshot};
 
@@ -43,6 +44,14 @@ enum Command {
     AddAccountBytes {
         bytes: Vec<u8>,
         reply: oneshot::Sender<std::result::Result<(), String>>,
+    },
+    /// Consume an AgentDebitNote synchronously: import note, build tx,
+    /// prove, submit, wait for block inclusion. Returns (tx_id, block_num).
+    ConsumeAdnNote {
+        note_bytes: Vec<u8>,
+        note_args: [u8; 32],
+        prepared_sig_bytes: Vec<u8>,
+        reply: oneshot::Sender<std::result::Result<(String, u32), String>>,
     },
     /// Rebuild a `TransactionRequest` from `request_bytes`, inject the
     /// `(pubkey_commitment, message, signature)` triple into its
@@ -85,6 +94,30 @@ impl SubmitterHandle {
         self.tx
             .send(Command::AddAccountBytes {
                 bytes,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| FacilitatorError::Internal("submitter actor stopped".into()))?;
+        let res = reply_rx
+            .await
+            .map_err(|_| FacilitatorError::Internal("submitter actor dropped reply".into()))?;
+        res.map_err(FacilitatorError::Internal)
+    }
+
+    /// Consume an AgentDebitNote synchronously: import note, build tx,
+    /// prove, submit, and wait for block inclusion. Returns (tx_id, block_num).
+    pub async fn consume_adn_note(
+        &self,
+        note_bytes: Vec<u8>,
+        note_args: [u8; 32],
+        prepared_sig_bytes: Vec<u8>,
+    ) -> Result<(String, u32)> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(Command::ConsumeAdnNote {
+                note_bytes,
+                note_args,
+                prepared_sig_bytes,
                 reply: reply_tx,
             })
             .await
@@ -183,6 +216,21 @@ pub fn spawn_submitter_actor(
                         };
                         let _ = reply.send(res);
                     }
+                    Command::ConsumeAdnNote {
+                        note_bytes,
+                        note_args,
+                        prepared_sig_bytes,
+                        reply,
+                    } => {
+                        let res = consume_adn_note_inner(
+                            &mut client,
+                            &note_bytes,
+                            &note_args,
+                            &prepared_sig_bytes,
+                        )
+                        .await;
+                        let _ = reply.send(res);
+                    }
                     Command::RebuildAndSubmit {
                         account_id,
                         request_bytes,
@@ -250,6 +298,100 @@ async fn rebuild_and_submit_inner(
         .await
         .map_err(|e| format!("submit_new_transaction: {e}"))?;
     Ok(format!("{tx_id}"))
+}
+
+/// Consume an AgentDebitNote: deserialize the note, build a consume tx
+/// with the agent's prepared Falcon signature on the advice stack,
+/// prove + submit, sync to confirm block inclusion.
+async fn consume_adn_note_inner(
+    client: &mut MidenSdkClient<FilesystemKeyStore>,
+    note_bytes: &[u8],
+    note_args_bytes: &[u8; 32],
+    prepared_sig_bytes: &[u8],
+) -> std::result::Result<(String, u32), String> {
+    // 1. Deserialize the Note
+    let note = Note::read_from_bytes(note_bytes)
+        .map_err(|e| format!("Note decode: {e}"))?;
+
+    // 2. Parse note_args: 4 felts packed as 4 x u64 big-endian
+    let note_args_word: Word = {
+        let mut felts = [Felt::ZERO; 4];
+        for i in 0..4 {
+            let bytes: [u8; 8] = note_args_bytes[i * 8..(i + 1) * 8]
+                .try_into()
+                .map_err(|_| "note_args slice error".to_string())?;
+            felts[i] = Felt::new(u64::from_be_bytes(bytes));
+        }
+        felts.into()
+    };
+
+    // 3. Parse prepared signature into Felts for advice stack
+    let prepared_sig_felts: Vec<Felt> = prepared_sig_bytes
+        .chunks_exact(8)
+        .map(|chunk| {
+            let bytes: [u8; 8] = chunk.try_into().unwrap();
+            Felt::new(u64::from_le_bytes(bytes))
+        })
+        .collect();
+
+    // 4. Compute the advice map key for the Falcon signature.
+    //    The MASM note script looks up the sig at key = merge(AGENT_PK, MESSAGE).
+    //    We need to compute both the message and the agent's PK from the note storage.
+    //
+    //    Message = merge(serial_num, note_args_word) — same as debit_message()
+    //    Agent PK = first 4 felts of note storage
+    let serial_num = note.recipient().serial_num();
+    let message = miden_protocol::Hasher::merge(&[serial_num.into(), note_args_word.into()]);
+    let agent_pk: Word = {
+        let storage_elements = note.recipient().storage().to_elements();
+        if storage_elements.len() >= 4 {
+            [storage_elements[0], storage_elements[1],
+             storage_elements[2], storage_elements[3]].into()
+        } else {
+            return Err("note storage too short for agent_pk".into());
+        }
+    };
+    let sig_key: Word = miden_protocol::Hasher::merge(&[agent_pk, message]);
+
+    // 5. Build TransactionRequest with the sig in the advice MAP.
+    //    The MASM note script detects the key via adv.has_mapkey and
+    //    pushes the sig from map → advice stack before verification.
+    let request = TransactionRequestBuilder::new()
+        .input_notes([(note, Some(note_args_word))])
+        .extend_advice_map([(sig_key, prepared_sig_felts.as_slice())])
+        .build()
+        .map_err(|e| format!("build consume request: {e}"))?;
+
+    // 6. Sync state to get current chain state
+    client
+        .sync_state()
+        .await
+        .map_err(|e: ClientError| format!("sync_state before submit: {e}"))?;
+
+    // 7. Get the facilitator's account ID from env
+    let consumer_account_id = if let Ok(hex) = std::env::var("FACILITATOR_ACCOUNT_ID") {
+        AccountId::from_hex(&hex)
+            .map_err(|e| format!("FACILITATOR_ACCOUNT_ID parse: {e}"))?
+    } else {
+        return Err("FACILITATOR_ACCOUNT_ID not set — cannot consume note".into());
+    };
+
+    // 8. Submit: proves locally + submits to Miden node
+    let tx_id = client
+        .submit_new_transaction(consumer_account_id, request)
+        .await
+        .map_err(|e| format!("submit_new_transaction: {e}"))?;
+
+    // 9. Sync again to confirm block inclusion
+    let sync_result = client
+        .sync_state()
+        .await
+        .map_err(|e: ClientError| format!("sync_state after submit: {e}"))?;
+
+    let block_num = sync_result.block_num.as_u32();
+    tracing::info!(%tx_id, block_num, "ADN note consumed and confirmed on-chain");
+
+    Ok((format!("{tx_id}"), block_num))
 }
 
 async fn build_client(

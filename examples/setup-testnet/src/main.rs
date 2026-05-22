@@ -108,6 +108,11 @@ struct SetupReport {
     adn_balance: Option<u64>,
     #[serde(default)]
     adn_expiry_block: Option<u32>,
+    /// Facilitator account for note consumption
+    #[serde(default)]
+    facilitator_account_id_hex: Option<String>,
+    #[serde(default)]
+    facilitator_account_snapshot_path: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -204,6 +209,33 @@ async fn main() -> anyhow::Result<()> {
     let merchant_id_bech32 = merchant.id().to_bech32(NetworkId::Testnet);
     let merchant_id_hex = merchant.id().to_hex();
     tracing::info!(%merchant_id_bech32, "merchant deployed locally");
+
+    // ─── 1c. Deploy a facilitator wallet account ───
+    // The facilitator needs its own on-chain account to consume
+    // AgentDebitNotes (the note script adds assets to the consumer's
+    // vault, so the consumer needs a BasicWallet component).
+    let facilitator_init_seed = rand_seed_32(&mut client);
+    let facilitator_key = AuthSecretKey::new_falcon512_poseidon2_with_rng(client.rng());
+    let facilitator_account = AccountBuilder::new(facilitator_init_seed)
+        .account_type(AccountType::RegularAccountUpdatableCode)
+        .storage_mode(AccountStorageMode::Public)
+        .with_auth_component(AuthSingleSig::new(
+            facilitator_key.public_key().to_commitment().into(),
+            AuthSchemeId::Falcon512Poseidon2,
+        ))
+        .with_component(BasicWallet)
+        .build()
+        .map_err(|e| anyhow::anyhow!("facilitator build: {e:?}"))?;
+    client
+        .add_account(&facilitator_account, false)
+        .await
+        .context("add facilitator account")?;
+    keystore
+        .add_key(&facilitator_key, facilitator_account.id())
+        .await
+        .map_err(|e| anyhow::anyhow!("facilitator keystore add: {e:?}"))?;
+    let facilitator_account_id_hex = facilitator_account.id().to_hex();
+    tracing::info!(facilitator_id = %facilitator_account_id_hex, "facilitator account deployed locally");
 
     // ─── 2. Deploy agents (MultisigGuardian, threshold=1, guardian disabled) ───
     //
@@ -427,6 +459,13 @@ async fn main() -> anyhow::Result<()> {
         tokio::time::sleep(Duration::from_secs(6)).await;
         client.sync_state().await?;
 
+        // Save serialized note for the agent to send in chain-finality mode
+        let adn_note_data_path = args.out_dir.join("adn_note.b64");
+        let adn_note_b64 = base64::engine::general_purpose::STANDARD
+            .encode(adn_note.to_bytes());
+        std::fs::write(&adn_note_data_path, &adn_note_b64)?;
+        tracing::info!("ADN note data saved");
+
         adn_info = Some((
             format!("0x{}", hex::encode(adn_note_id.to_bytes())),
             adn_serial,
@@ -496,6 +535,13 @@ async fn main() -> anyhow::Result<()> {
         None => (None, None, None, None),
     };
 
+    // Save facilitator account snapshot
+    let fac_snap_path = args.out_dir.join("facilitator_account.b64");
+    let fac_snap_b64 = base64::engine::general_purpose::STANDARD
+        .encode(facilitator_account.to_bytes());
+    std::fs::write(&fac_snap_path, &fac_snap_b64)?;
+    tracing::info!("facilitator account snapshot saved");
+
     let report = SetupReport {
         rpc_endpoint: args.rpc_endpoint.clone(),
         faucet_id_bech32: faucet_bech32,
@@ -509,6 +555,10 @@ async fn main() -> anyhow::Result<()> {
         adn_serial_num_hex: adn_serial_hex,
         adn_balance,
         adn_expiry_block: adn_expiry,
+        facilitator_account_id_hex: Some(facilitator_account_id_hex),
+        facilitator_account_snapshot_path: Some(
+            relative(&args.out_dir, &fac_snap_path),
+        ),
     };
     let toml_path = args.out_dir.join("setup.toml");
     std::fs::write(&toml_path, toml::to_string_pretty(&report)?)?;

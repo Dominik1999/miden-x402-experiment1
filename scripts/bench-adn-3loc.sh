@@ -148,24 +148,8 @@ wait $PID_FAC; log "Facilitator build done."
 wait $PID_MERCH; log "Merchant build done."
 echo ""
 
-# ── Phase 3: Start facilitator FIRST (needed for setup-testnet to fetch pubkey) ──
-log "Phase 3: Starting facilitator on ${FAC_IP}:7002..."
-ssh_cmd "$FAC_IP" "bash -lc '
-  cd ~/miden-x402
-  mkdir -p fac-data
-  nohup env FACILITATOR_DATA_DIR=./fac-data FACILITATOR_HTTP_PORT=7002 \
-    MIDEN_RPC_ENDPOINT=https://rpc.testnet.miden.io RUST_LOG=info \
-    ./target/release/x402-facilitator-server > facilitator.log 2>&1 &
-'"
-
-for i in $(seq 1 60); do
-  ssh_cmd "$FAC_IP" "grep -q 'listening' ~/miden-x402/facilitator.log 2>/dev/null" 2>/dev/null && break
-  sleep 5
-done
-log "Facilitator listening."
-
-# ── Phase 4: Setup testnet accounts + AgentDebitNote ──
-log "Phase 4: Setting up testnet accounts + AgentDebitNote..."
+# ── Phase 3: Setup testnet accounts + AgentDebitNote ──
+log "Phase 3: Setting up testnet accounts + AgentDebitNote..."
 
 ssh_cmd "$FAC_IP" "bash -lc '
   cd ~/miden-x402
@@ -180,8 +164,29 @@ echo "$SETUP_TOML" | sed 's/^/    /'
 
 MERCHANT_ID=$(echo "$SETUP_TOML" | sed -n 's/^merchant_id_hex *= *"\([^"]*\)".*/\1/p' | head -1)
 FAUCET_ID=$(echo "$SETUP_TOML" | sed -n 's/^faucet_id_hex *= *"\([^"]*\)".*/\1/p' | head -1)
+FAC_ACCOUNT_ID=$(echo "$SETUP_TOML" | sed -n 's/^facilitator_account_id_hex *= *"\([^"]*\)".*/\1/p' | head -1)
 log "Merchant ID: ${MERCHANT_ID}"
 log "Faucet ID:   ${FAUCET_ID}"
+log "Facilitator Account ID: ${FAC_ACCOUNT_ID}"
+
+# ── Phase 4: Start facilitator with account snapshot ──
+log "Phase 4: Starting facilitator on ${FAC_IP}:7002 (with account import)..."
+ssh_cmd "$FAC_IP" "bash -lc '
+  cd ~/miden-x402
+  mkdir -p fac-data
+  nohup env FACILITATOR_DATA_DIR=./fac-data FACILITATOR_HTTP_PORT=7002 \
+    MIDEN_RPC_ENDPOINT=https://rpc.testnet.miden.io \
+    FACILITATOR_ACCOUNT_ID=${FAC_ACCOUNT_ID} \
+    FACILITATOR_ACCOUNT_SNAPSHOT=./testnet-state/facilitator_account.b64 \
+    RUST_LOG=info \
+    ./target/release/x402-facilitator-server > facilitator.log 2>&1 &
+'"
+
+for i in $(seq 1 60); do
+  ssh_cmd "$FAC_IP" "grep -q 'listening' ~/miden-x402/facilitator.log 2>/dev/null" 2>/dev/null && break
+  sleep 5
+done
+log "Facilitator listening."
 
 # ── Phase 5: Start merchant (points to facilitator) ──
 log "Phase 5: Starting merchant on ${MERCH_IP}:7001 → facilitator at ${FAC_IP}:7002..."

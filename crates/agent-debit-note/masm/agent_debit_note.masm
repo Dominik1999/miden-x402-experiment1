@@ -82,9 +82,46 @@ proc consume_path
     exec.poseidon2::merge
     # => [MESSAGE]
 
-    # ── 2. Verify AGENT signature (from advice stack) ──
+    # ── 2. Verify AGENT signature ──
+    #
+    # The signature can come from either:
+    #   a) The advice STACK (pre-populated via AdviceInputs::with_stack)
+    #      Used in tests and by the agent-only bench.
+    #   b) The advice MAP at key = merge(AGENT_PK, MESSAGE)
+    #      Used by the facilitator submitter (via TransactionRequest::advice_map).
+    #
+    # Strategy: try the advice map first. If the key exists, push the sig
+    # from map → advice stack. If not, assume it's already on the stack.
+
     padw push.AGENT_PK_PTR mem_loadw_le
     # => [AGENT_PK, MESSAGE]
+
+    # Compute map key = merge(AGENT_PK, MESSAGE)
+    dupw.1 dupw.1
+    # => [AGENT_PK, MESSAGE, AGENT_PK, MESSAGE]
+    exec.poseidon2::merge
+    # => [SIG_KEY, AGENT_PK, MESSAGE]
+
+    # Check if the key exists in the advice map
+    adv.has_mapkey
+    # => [SIG_KEY, AGENT_PK, MESSAGE]
+    adv_push.1
+    # => [has_sig, SIG_KEY, AGENT_PK, MESSAGE]
+
+    if.true
+        # Sig is in the map — push it to the advice stack
+        # SIG_KEY is still on the operand stack
+        adv.push_mapval
+        # => [SIG_KEY, AGENT_PK, MESSAGE]
+        # AS => [PREPARED_SIG]
+        dropw
+        # => [AGENT_PK, MESSAGE]
+    else
+        # Sig is already on the advice stack (test/bench mode)
+        dropw
+        # => [AGENT_PK, MESSAGE]
+    end
+
     exec.falcon512_poseidon2::verify
     # => []
 
