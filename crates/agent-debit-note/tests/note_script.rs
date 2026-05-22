@@ -521,3 +521,38 @@ async fn test_attack_agent_inflates_amount() -> anyhow::Result<()> {
     println!("ATTACK BLOCKED: agent amount inflation rejected");
     Ok(())
 }
+
+// ── ADVICE MAP PATH TEST ──
+
+/// Verify that the Falcon sig can be delivered via the advice MAP
+/// (not just the stack). This is the path used by the facilitator's
+/// submitter when consuming the note via TransactionRequestBuilder.
+#[tokio::test]
+async fn test_consume_with_sig_in_advice_map() -> anyhow::Result<()> {
+    let agent_sk = make_keypair(30);
+    let pk: Word = agent_sk.public_key().to_commitment().into();
+    let s = setup_test(pk, 1000, serial(30,2,3,4), 1_000_000)?;
+    let msg = debit_message(s.serial_num, s.merchant_id, 100);
+
+    // Sign and prepare
+    let sig = agent_sk.sign(msg);
+    let prepared = sig.to_prepared_signature(msg);
+
+    // Put sig in the advice MAP at key = merge(AGENT_PK, MESSAGE)
+    let sig_key = Hasher::merge(&[pk, msg]);
+
+    let advice = AdviceInputs::default()
+        .with_map([(sig_key, prepared)]);
+
+    let tx = s.mock_chain
+        .build_tx_context(s.consumer_id, &[s.note_id], &[])?
+        .extend_note_args(note_args_for(s.merchant_id, 100, s.note_id))
+        .add_note_script(s.note_script)
+        .extend_advice_inputs(advice)
+        .build()?;
+
+    let executed = tx.execute().await?;
+    assert_eq!(executed.output_notes().num_notes(), 2);
+    println!("ADVICE MAP PATH TEST PASSED: sig from map works for facilitator submitter");
+    Ok(())
+}

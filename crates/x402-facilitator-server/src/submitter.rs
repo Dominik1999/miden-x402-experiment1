@@ -334,28 +334,33 @@ async fn consume_adn_note_inner(
         })
         .collect();
 
-    // 4. Build TransactionRequest that consumes the note.
-    //    note_args is just a Word (NoteArgs = Word in miden-client).
+    // 4. Compute the advice map key for the Falcon signature.
+    //    The MASM note script looks up the sig at key = merge(AGENT_PK, MESSAGE).
+    //    We need to compute both the message and the agent's PK from the note storage.
+    //
+    //    Message = merge(serial_num, note_args_word) — same as debit_message()
+    //    Agent PK = first 4 felts of note storage
+    let serial_num = note.recipient().serial_num();
+    let message = miden_protocol::Hasher::merge(&[serial_num.into(), note_args_word.into()]);
+    let agent_pk: Word = {
+        let storage_elements = note.recipient().storage().to_elements();
+        if storage_elements.len() >= 4 {
+            [storage_elements[0], storage_elements[1],
+             storage_elements[2], storage_elements[3]].into()
+        } else {
+            return Err("note storage too short for agent_pk".into());
+        }
+    };
+    let sig_key: Word = miden_protocol::Hasher::merge(&[agent_pk, message]);
+
+    // 5. Build TransactionRequest with the sig in the advice MAP.
+    //    The MASM note script detects the key via adv.has_mapkey and
+    //    pushes the sig from map → advice stack before verification.
     let request = TransactionRequestBuilder::new()
         .input_notes([(note, Some(note_args_word))])
+        .extend_advice_map([(sig_key, prepared_sig_felts.as_slice())])
         .build()
         .map_err(|e| format!("build consume request: {e}"))?;
-
-    // TODO: inject prepared_sig_felts into the TransactionRequest's
-    // advice inputs so the note script can read them from the advice
-    // stack during execution. Currently the miden-client's
-    // TransactionRequestBuilder doesn't expose advice_stack injection
-    // directly — the advice_map is available but the stack is not.
-    // This means the Falcon verification inside the note script will
-    // fail because it can't find the signature on the advice stack.
-    //
-    // For a full implementation, we would need to either:
-    // a) Extend TransactionRequest with advice_stack support, or
-    // b) Use a custom TransactionExecutor that pre-populates the stack.
-    //
-    // For now, this will fail at proving time with a signature error.
-    // The hot-path benchmark (ack-only) still works.
-    let _ = prepared_sig_felts; // suppress unused warning
 
     // 5. Sync state to get current chain state
     client
