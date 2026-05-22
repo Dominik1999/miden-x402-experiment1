@@ -3051,25 +3051,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "guardian-server-bench-loadgen"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "chrono",
- "clap",
- "guardian-client",
- "hex",
- "miden-confidential-contracts",
- "miden-protocol",
- "rand 0.9.4",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "guardian-shared"
 version = "0.14.6"
 dependencies = [
@@ -4028,35 +4009,6 @@ name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
-
-[[package]]
-name = "miden-agentic-client"
-version = "0.14.6"
-dependencies = [
- "anyhow",
- "axum",
- "base64",
- "guardian-shared",
- "hex",
- "miden-client",
- "miden-client-sqlite-store",
- "miden-confidential-contracts",
- "miden-keystore",
- "miden-protocol",
- "miden-rpc-client",
- "miden-standards",
- "miden-tx",
- "rand 0.9.4",
- "rand_chacha 0.9.0",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "x402-facilitator-server",
-]
 
 [[package]]
 name = "miden-agglayer"
@@ -9096,7 +9048,6 @@ dependencies = [
  "clap",
  "dotenvy",
  "hex",
- "miden-agentic-client",
  "miden-protocol",
  "reqwest 0.12.28",
  "serde",
@@ -9111,6 +9062,7 @@ dependencies = [
 name = "x402-facilitator-server"
 version = "0.14.6"
 dependencies = [
+ "adn-client",
  "agent-debit-note",
  "anyhow",
  "axum",
@@ -9129,6 +9081,7 @@ dependencies = [
  "miden-tx",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tempfile",

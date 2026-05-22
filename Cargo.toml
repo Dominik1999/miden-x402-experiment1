@@ -3,13 +3,11 @@ members = [
     "crates/shared",
     "crates/client",
     "crates/server",
-    "crates/server/bench/loadgen",
     "crates/miden-rpc-client",
     "crates/miden-keystore",
     "crates/contracts",
     "crates/miden-multisig-client",
     "crates/x402-facilitator-server",
-    "crates/miden-agentic-client",
     "crates/agent-debit-note",
     "crates/adn-client",
     "examples/x402-bench",
@@ -25,7 +23,8 @@ default-members = [
     "crates/contracts",
     "crates/miden-multisig-client",
     "crates/x402-facilitator-server",
-    "crates/miden-agentic-client",
+    "crates/agent-debit-note",
+    "crates/adn-client",
 ]
 resolver = "2"
 
@@ -35,8 +34,8 @@ edition = "2024"
 rust-version = "1.93"
 authors = ["miden-x402 contributors"]
 license = "AGPL-3.0"
-repository = "https://github.com/ermvrs/miden-x402"
-homepage = "https://github.com/ermvrs/miden-x402"
+repository = "https://github.com/Dominik1999/miden-x402-experiment1"
+homepage = "https://github.com/Dominik1999/miden-x402-experiment1"
 
 [profile.release]
 strip = true

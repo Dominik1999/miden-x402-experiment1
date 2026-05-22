@@ -66,7 +66,6 @@ dotenvy = "0.15"
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-miden-agentic-client = { path = "../miden-agentic-client" }
 adn-client = { path = "../adn-client" }
 rand = { workspace = true }
 rand_chacha = { workspace = true }

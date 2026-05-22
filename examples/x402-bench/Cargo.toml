@@ -7,7 +7,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "End-to-end x402-on-Miden benchmark harness"
+description = "End-to-end x402-on-Miden AgentDebitNote benchmark harness"
 publish = false
 
 [[bin]]
@@ -15,7 +15,6 @@ name = "x402-bench"
 path = "src/main.rs"
 
 [dependencies]
-miden-agentic-client = { path = "../../crates/miden-agentic-client" }
 adn-client = { path = "../../crates/adn-client" }
 agent-debit-note = { path = "../../crates/agent-debit-note" }
 miden-protocol = { workspace = true }
