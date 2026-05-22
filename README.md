@@ -150,18 +150,40 @@ All 7 attack vectors are tested and blocked (see `crates/agent-debit-note/tests/
 All 24 tests pass.
 ```
 
-## Expected latency
+## Measured latency
 
-> **Not yet measured on a real network.** The numbers below are projected from
-> the P2ID approach measurements on AWS us-east-1 <-> eu-west-1 (68ms RTT).
-> A cross-region AWS benchmark for the ADN flow is needed to confirm.
+Measured on a real 3-location deployment (50 payments, 0 errors):
 
 ```
-Agent computation:     2 ms   (Falcon sign only, no kernel execution)
-Merchant round-trip:  70 ms   (1 RTT + facilitator relay on loopback)
-────────────────────────────
-Hot-path total:      ~140 ms  (projected: 2 RTT + 2ms signing)
+Topology:
+  Agent:       local Mac (Zurich)
+  Merchant:    AWS us-east-1 (Virginia)     113ms RTT from agent
+  Facilitator: AWS eu-west-1 (Ireland)       68ms RTT from merchant
 ```
+
+| Metric | P50 | P95 | P99 | Min | Max |
+|--------|-----|-----|-----|-----|-----|
+| **Total (402 → resource)** | **394ms** | 576ms | 799ms | 385ms | 799ms |
+| **Hot path (send → resource)** | **270ms** | 379ms | 621ms | 265ms | 621ms |
+| **Falcon signing** | **4ms** | 5ms | 5ms | 1ms | 5ms |
+
+```
+Breakdown (P50):
+
+  GET /resource → 402:               116 ms  (1 RTT agent↔merchant)
+  Falcon sign:                         4 ms  (local, no kernel execution)
+  GET + Payment-Sig → 200:           270 ms  (1 RTT agent↔merchant 113ms
+                                              + merchant↔facilitator relay 68ms
+                                              + facilitator verify ~1ms
+                                              + HTTP overhead)
+  ──────────────────────────────────────────
+  Total P50:                          394 ms
+```
+
+The latency is **RTT-dominated**, not compute-dominated. The 4ms Falcon
+signing is negligible. With colocated merchant + facilitator (0ms relay
+instead of 68ms), the total drops to ~230ms. With a closer agent↔merchant
+link (68ms instead of 113ms), it drops further to ~140ms.
 
 Async settlement: ~7-10s (STARK prove + block inclusion), off the critical path.
 
