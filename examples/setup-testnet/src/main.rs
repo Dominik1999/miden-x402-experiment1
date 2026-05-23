@@ -417,7 +417,7 @@ async fn main() -> anyhow::Result<()> {
         };
 
         let adn_metadata = NoteMetadata::new(agent_id, NoteType::Public)
-            .with_tag(NoteTag::new(0));
+            .with_tag(NoteTag::with_account_target(facilitator_account.id()));
         let adn_vault = NoteAssets::new(vec![miden_protocol::asset::Asset::Fungible(adn_asset)])
             .map_err(|e| anyhow::anyhow!("ADN vault: {e}"))?;
         let adn_recipient = NoteRecipient::new(adn_serial, adn_script, adn_storage);

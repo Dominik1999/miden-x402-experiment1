@@ -55,17 +55,7 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or(20_000);
             let submitter_dir = data_dir.join("submitter");
             let handle = spawn_submitter_actor(endpoint, submitter_dir, timeout);
-            // Try a sync to confirm connectivity; non-fatal on failure.
-            match handle.sync().await {
-                Ok(block_num) => {
-                    tracing::info!(block_num, "submitter actor synced at startup");
-                    submitter_available.store(true, std::sync::atomic::Ordering::Relaxed);
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "submitter actor sync failed at startup; continuing");
-                }
-            }
-            // Import facilitator account if snapshot provided
+            // Import facilitator account BEFORE sync (so sync discovers it)
             if let Ok(snap_path) = std::env::var("FACILITATOR_ACCOUNT_SNAPSHOT") {
                 match std::fs::read_to_string(&snap_path) {
                     Ok(b64) => {
@@ -79,6 +69,32 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
                     Err(e) => tracing::warn!(error = %e, path = %snap_path, "failed to read facilitator snapshot"),
+                }
+            }
+            // Import ADN note BEFORE sync (so sync authenticates it)
+            if let Ok(note_path) = std::env::var("ADN_NOTE_SNAPSHOT") {
+                match std::fs::read_to_string(&note_path) {
+                    Ok(b64) => {
+                        use base64::Engine;
+                        match base64::engine::general_purpose::STANDARD.decode(b64.trim().as_bytes()) {
+                            Ok(bytes) => match handle.import_note_bytes(bytes).await {
+                                Ok(()) => tracing::info!("ADN note imported into submitter (pre-sync)"),
+                                Err(e) => tracing::warn!(error = %e, "failed to import ADN note"),
+                            },
+                            Err(e) => tracing::warn!(error = %e, "failed to decode ADN note b64"),
+                        }
+                    }
+                    Err(e) => tracing::warn!(error = %e, path = %note_path, "failed to read ADN note snapshot"),
+                }
+            }
+            // Sync AFTER importing account + note (so note gets authenticated)
+            match handle.sync().await {
+                Ok(block_num) => {
+                    tracing::info!(block_num, "submitter actor synced at startup");
+                    submitter_available.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "submitter actor sync failed at startup; continuing");
                 }
             }
             Some(handle)

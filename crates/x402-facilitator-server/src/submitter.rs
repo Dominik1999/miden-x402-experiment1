@@ -45,6 +45,11 @@ enum Command {
         bytes: Vec<u8>,
         reply: oneshot::Sender<std::result::Result<(), String>>,
     },
+    /// Import a serialized Note into the client's store (for later consumption).
+    ImportNoteBytes {
+        bytes: Vec<u8>,
+        reply: oneshot::Sender<std::result::Result<(), String>>,
+    },
     /// Consume an AgentDebitNote synchronously: import note, build tx,
     /// prove, submit, wait for block inclusion. Returns (tx_id, block_num).
     ConsumeAdnNote {
@@ -93,6 +98,23 @@ impl SubmitterHandle {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.tx
             .send(Command::AddAccountBytes {
+                bytes,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| FacilitatorError::Internal("submitter actor stopped".into()))?;
+        let res = reply_rx
+            .await
+            .map_err(|_| FacilitatorError::Internal("submitter actor dropped reply".into()))?;
+        res.map_err(FacilitatorError::Internal)
+    }
+
+    /// Import a serialized Note into the client's store.
+    /// Should be called BEFORE sync so the note gets authenticated.
+    pub async fn import_note_bytes(&self, bytes: Vec<u8>) -> Result<()> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(Command::ImportNoteBytes {
                 bytes,
                 reply: reply_tx,
             })
@@ -216,6 +238,10 @@ pub fn spawn_submitter_actor(
                         };
                         let _ = reply.send(res);
                     }
+                    Command::ImportNoteBytes { bytes, reply } => {
+                        let res = import_note_inner(&mut client, &bytes).await;
+                        let _ = reply.send(res);
+                    }
                     Command::ConsumeAdnNote {
                         note_bytes,
                         note_args,
@@ -300,6 +326,33 @@ async fn rebuild_and_submit_inner(
     Ok(format!("{tx_id}"))
 }
 
+/// Import a Note into the client's store so it can be authenticated during sync.
+async fn import_note_inner(
+    client: &mut MidenSdkClient<FilesystemKeyStore>,
+    note_bytes: &[u8],
+) -> std::result::Result<(), String> {
+    use miden_protocol::note::{NoteFile, NoteDetails};
+    let note = Note::read_from_bytes(note_bytes)
+        .map_err(|e| format!("Note decode: {e}"))?;
+    let tag = note.metadata().tag();
+    tracing::info!(note_id = %note.id(), ?tag, "importing note into client store");
+    let note_details = NoteDetails::new(
+        note.assets().clone(),
+        note.recipient().clone(),
+    );
+    let note_file = NoteFile::NoteDetails {
+        details: note_details,
+        after_block_num: 0u32.into(),
+        tag: Some(tag),
+    };
+    client
+        .import_notes(&[note_file])
+        .await
+        .map_err(|e| format!("import_notes: {e}"))?;
+    tracing::info!(note_id = %note.id(), "note imported successfully with tag");
+    Ok(())
+}
+
 /// Consume an AgentDebitNote: deserialize the note, build a consume tx
 /// with the agent's prepared Falcon signature on the advice stack,
 /// prove + submit, sync to confirm block inclusion.
@@ -309,9 +362,27 @@ async fn consume_adn_note_inner(
     note_args_bytes: &[u8; 32],
     prepared_sig_bytes: &[u8],
 ) -> std::result::Result<(String, u32), String> {
+    tracing::info!(
+        note_bytes_len = note_bytes.len(),
+        note_args_len = note_args_bytes.len(),
+        sig_bytes_len = prepared_sig_bytes.len(),
+        "consume_adn_note_inner: starting"
+    );
+
     // 1. Deserialize the Note
     let note = Note::read_from_bytes(note_bytes)
         .map_err(|e| format!("Note decode: {e}"))?;
+    tracing::info!(
+        note_id = %note.id(),
+        num_assets = note.assets().num_assets(),
+        storage_items = note.recipient().storage().num_items(),
+        storage_commitment = ?note.recipient().storage().commitment(),
+        script_root = ?note.recipient().script().root(),
+        serial_num = ?note.recipient().serial_num(),
+        sender = %note.metadata().sender(),
+        note_type = ?note.metadata().note_type(),
+        "step 1: note deserialized"
+    );
 
     // 2. Parse note_args: 4 felts packed as 4 x u64 big-endian
     let note_args_word: Word = {
@@ -352,10 +423,11 @@ async fn consume_adn_note_inner(
         }
     };
     let sig_key: Word = miden_protocol::Hasher::merge(&[agent_pk, message]);
+    tracing::info!(?sig_key, "step 4: sig_key computed");
 
-    // 5. Import the note into the client's store so the executor can
-    //    find the note and its script during execution.
+    // 5. Import the note into the client's store (with tag for sync authentication)
     use miden_protocol::note::{NoteFile, NoteDetails};
+    let tag = note.metadata().tag();
     let note_details = NoteDetails::new(
         note.assets().clone(),
         note.recipient().clone(),
@@ -363,12 +435,13 @@ async fn consume_adn_note_inner(
     let note_file = NoteFile::NoteDetails {
         details: note_details,
         after_block_num: 0u32.into(),
-        tag: None,
+        tag: Some(tag),
     };
     client
         .import_notes(&[note_file])
         .await
         .map_err(|e| format!("import_notes: {e}"))?;
+    tracing::info!(?tag, "step 5: note imported into client store with tag");
 
     let request = TransactionRequestBuilder::new()
         .input_notes([(note, Some(note_args_word))])
@@ -382,16 +455,15 @@ async fn consume_adn_note_inner(
         .await
         .map_err(|e: ClientError| format!("sync_state before submit: {e}"))?;
 
-    // 6. Get the facilitator's account ID from env or use first account in store
+    // 6b. Get the facilitator's account ID from env
     let consumer_account_id = if let Ok(hex) = std::env::var("FACILITATOR_ACCOUNT_ID") {
         AccountId::from_hex(&hex)
             .map_err(|e| format!("FACILITATOR_ACCOUNT_ID parse: {e}"))?
     } else {
-        // Fallback: try to get any account from the store
         return Err("FACILITATOR_ACCOUNT_ID not set — cannot consume note".into());
     };
-
     // 7. Submit: proves locally + submits to Miden node
+    tracing::info!(%consumer_account_id, "submitting consume transaction...");
     let tx_id = client
         .submit_new_transaction(consumer_account_id, request)
         .await
@@ -428,7 +500,7 @@ async fn build_client(
         .rpc(rpc_client)
         .sqlite_store(store_path)
         .authenticator(keystore)
-        .in_debug_mode(false.into())
+        .in_debug_mode(true.into())
         .build()
         .await
         .map_err(|e| FacilitatorError::Internal(format!("client build: {e}")))

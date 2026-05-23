@@ -93,6 +93,9 @@ struct AdnPaymentSignature {
     prepared_signature_hex: String,
     expiry_block_height: u32,
     agent_pubkey_commitment_hex: String,
+    /// Hex-encoded serialized Note (for chain-finality settlement).
+    #[serde(default)]
+    note_data_hex: Option<String>,
 }
 
 /// Facilitator ack for ADN payments.
