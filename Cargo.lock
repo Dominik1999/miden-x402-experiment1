@@ -4100,9 +4100,8 @@ dependencies = [
 
 [[package]]
 name = "miden-client"
-version = "0.14.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15007f2cf4e80316a8141665b43f454e77ce0dfd2ac0307ce6cdf7a5d552d58b"
+version = "0.14.9"
+source = "git+https://github.com/0xMiden/miden-client.git?branch=main#bfe962aee773f81965172077a3c6b1418507f55f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4135,14 +4134,12 @@ dependencies = [
  "tonic-web-wasm-client",
  "tracing",
  "uuid",
- "web-sys",
 ]
 
 [[package]]
 name = "miden-client-sqlite-store"
-version = "0.14.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53a6d9c9bf443b9df440c010eeab6916ab6bc529faed5eb19f84ab7bc21aad59"
+version = "0.14.9"
+source = "git+https://github.com/0xMiden/miden-client.git?branch=main#bfe962aee773f81965172077a3c6b1418507f55f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4735,9 +4732,9 @@ dependencies = [
 
 [[package]]
 name = "miden-testing"
-version = "0.14.5"
+version = "0.14.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44aa821e2e285e6a8a262f964794313c35abea3716eda7af2e0588cae4ff7751"
+checksum = "b1cb54b98ce485317a4fd67e45ff2818db61a9bd7fe75c217740efad71360c04"
 dependencies = [
  "anyhow",
  "itertools 0.14.0",

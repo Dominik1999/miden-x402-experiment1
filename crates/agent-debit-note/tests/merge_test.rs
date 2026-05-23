@@ -79,7 +79,6 @@ async fn test_merge_key_matches() -> anyhow::Result<()> {
     builder.add_output_note(RawOutputNote::Full(note));
     let mut mock_chain = builder.build()?;
     mock_chain.prove_next_block()?;
-    mock_chain.prove_next_block()?;
 
     let mut note_args = BTreeMap::new();
     note_args.insert(note_id, word_a);
