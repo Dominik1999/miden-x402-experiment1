@@ -65,11 +65,11 @@ rstest = "0.26"
 futures = "0.3"
 chrono = "0.4"
 
-# Miden
+# Miden — pinned to main for MMR sync fix + StackReadFailed fix (not yet released)
 miden-protocol = "0.14.5"
 miden-standards = "0.14.5"
 miden-tx = "0.14.5"
 miden-node-proto = "0.14.9"
-miden-testing = "0.14.5"
-miden-client = "0.14.5"
-miden-client-sqlite-store = "0.14.5"
+miden-testing = "0.14.6"
+miden-client = { git = "https://github.com/0xMiden/miden-client.git", branch = "main", version = "0.14.9" }
+miden-client-sqlite-store = { git = "https://github.com/0xMiden/miden-client.git", branch = "main", version = "0.14.9" }

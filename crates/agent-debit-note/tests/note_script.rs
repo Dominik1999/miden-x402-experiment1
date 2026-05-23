@@ -77,7 +77,6 @@ fn setup_test(agent_pk: Word, balance: u64, sn: Word, expiry: u32) -> anyhow::Re
     builder.add_output_note(RawOutputNote::Full(note));
     let mut mock_chain = builder.build()?;
     mock_chain.prove_next_block()?;
-    mock_chain.prove_next_block()?;
 
     Ok(TestSetup {
         mock_chain, note_id, note_script, serial_num: sn,
