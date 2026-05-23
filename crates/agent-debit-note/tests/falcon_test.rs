@@ -106,7 +106,6 @@ async fn test_falcon_verify_in_note_script() -> anyhow::Result<()> {
     builder.add_output_note(RawOutputNote::Full(note));
     let mut mock_chain = builder.build()?;
     mock_chain.prove_next_block()?;
-    mock_chain.prove_next_block()?;
 
     // Pass MESSAGE as note_args
     let mut note_args = BTreeMap::new();

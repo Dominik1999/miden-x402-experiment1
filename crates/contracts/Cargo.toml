@@ -14,14 +14,14 @@ default-run = "miden-confidential-contracts"
 miden-standards = { version = "=0.14.5" }
 miden-protocol = { version = "=0.14.5" }
 miden-tx = { version = "=0.14.5" }
-miden-testing = { version = "=0.14.5" }
+miden-testing = { version = "=0.14.6" }
 
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros", "fs"] }
 guardian-shared = { version = "=0.14.6", path = "../shared" }
 
 [dev-dependencies]
-miden-client = { version = "=0.14.5", features = ["testing", "tonic"] }
+miden-client = { git = "https://github.com/0xMiden/miden-client.git", branch = "main", features = ["testing", "tonic"] }
 
 rand = { workspace = true }
 rand_chacha = { workspace = true }
