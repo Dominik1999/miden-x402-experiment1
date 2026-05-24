@@ -362,27 +362,10 @@ async fn consume_adn_note_inner(
     note_args_bytes: &[u8; 32],
     prepared_sig_bytes: &[u8],
 ) -> std::result::Result<(String, u32), String> {
-    tracing::info!(
-        note_bytes_len = note_bytes.len(),
-        note_args_len = note_args_bytes.len(),
-        sig_bytes_len = prepared_sig_bytes.len(),
-        "consume_adn_note_inner: starting"
-    );
-
     // 1. Deserialize the Note
     let note = Note::read_from_bytes(note_bytes)
         .map_err(|e| format!("Note decode: {e}"))?;
-    tracing::info!(
-        note_id = %note.id(),
-        num_assets = note.assets().num_assets(),
-        storage_items = note.recipient().storage().num_items(),
-        storage_commitment = ?note.recipient().storage().commitment(),
-        script_root = ?note.recipient().script().root(),
-        serial_num = ?note.recipient().serial_num(),
-        sender = %note.metadata().sender(),
-        note_type = ?note.metadata().note_type(),
-        "step 1: note deserialized"
-    );
+    tracing::info!(note_id = %note.id(), "note deserialized");
 
     // 2. Parse note_args: 4 felts packed as 4 x u64 big-endian
     let note_args_word: Word = {
@@ -423,25 +406,8 @@ async fn consume_adn_note_inner(
         }
     };
     let sig_key: Word = miden_protocol::Hasher::merge(&[agent_pk, message]);
-    tracing::info!(?sig_key, "step 4: sig_key computed");
 
-    // 5. Import the note into the client's store (with tag for sync authentication)
-    use miden_protocol::note::{NoteFile, NoteDetails};
-    let tag = note.metadata().tag();
-    let note_details = NoteDetails::new(
-        note.assets().clone(),
-        note.recipient().clone(),
-    );
-    let note_file = NoteFile::NoteDetails {
-        details: note_details,
-        after_block_num: 0u32.into(),
-        tag: Some(tag),
-    };
-    client
-        .import_notes(&[note_file])
-        .await
-        .map_err(|e| format!("import_notes: {e}"))?;
-    tracing::info!(?tag, "step 5: note imported into client store with tag");
+    // Note is already imported at startup via ADN_NOTE_SNAPSHOT
 
     let request = TransactionRequestBuilder::new()
         .input_notes([(note, Some(note_args_word))])
@@ -455,15 +421,15 @@ async fn consume_adn_note_inner(
         .await
         .map_err(|e: ClientError| format!("sync_state before submit: {e}"))?;
 
-    // 6b. Get the facilitator's account ID from env
+    // 7. Get the facilitator's account ID and submit
     let consumer_account_id = if let Ok(hex) = std::env::var("FACILITATOR_ACCOUNT_ID") {
         AccountId::from_hex(&hex)
             .map_err(|e| format!("FACILITATOR_ACCOUNT_ID parse: {e}"))?
     } else {
         return Err("FACILITATOR_ACCOUNT_ID not set — cannot consume note".into());
     };
-    // 7. Submit: proves locally + submits to Miden node
-    tracing::info!(%consumer_account_id, "submitting consume transaction...");
+
+    tracing::info!(%consumer_account_id, "submitting consume transaction");
     let tx_id = client
         .submit_new_transaction(consumer_account_id, request)
         .await
@@ -500,7 +466,7 @@ async fn build_client(
         .rpc(rpc_client)
         .sqlite_store(store_path)
         .authenticator(keystore)
-        .in_debug_mode(true.into())
+        .in_debug_mode(false.into())
         .build()
         .await
         .map_err(|e| FacilitatorError::Internal(format!("client build: {e}")))
